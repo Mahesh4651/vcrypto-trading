@@ -1,0 +1,80 @@
+version: "3.9"
+
+services:
+  # ──────────────────────────────────────────
+  # PostgreSQL Database
+  # ──────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: vcrypt_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: vcrypt_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: root
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - vcrypt_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d vcrypt_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ──────────────────────────────────────────
+  # Spring Boot Backend
+  # ──────────────────────────────────────────
+  backend:
+    build:
+      context: ./SpringCrypto
+      dockerfile: Dockerfile
+    container_name: vcrypt_backend
+    restart: unless-stopped
+    environment:
+      # Override datasource to point to the postgres container
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/vcrypt_db
+      SPRING_DATASOURCE_USERNAME: postgres
+      SPRING_DATASOURCE_PASSWORD: root
+      # Frontend URL — set your EC2 public IP/domain here
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost}
+      SERVER_PORT: 8081
+    ports:
+      - "8081:8081"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - vcrypt_network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8081/actuator/health || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  # ──────────────────────────────────────────
+  # React Frontend served by Nginx
+  # ──────────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: vcrypt_frontend
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+    networks:
+      - vcrypt_network
+
+# ──────────────────────────────────────────
+# Volumes & Networks
+# ──────────────────────────────────────────
+volumes:
+  postgres_data:
+
+networks:
+  vcrypt_network:
+    driver: bridge
